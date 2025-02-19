@@ -284,8 +284,29 @@ class TG5012A:
         if set not in valid:
             raise ValueError("Invalid tracking. It should be one of %s" % (valid))
         return self.set("TRACKING", set)
+
+    def burst(self, set = "OFF"):
+        """Set burst to OFF, NCYC, GATED or INFINITE"""
+        valid = ["OFF", "NCYC", "GATED", "INFINITE"]
+        if set not in valid:
+            raise ValueError("Invalid tracking. It should be one of %s" % (valid))
+        return self.set("BST", set)
+
+    def burst_count(self, set = 1):
+        """Set burst count"""
+        return self.set("BSTCOUNT", str(set))
+
+    def trigger_src(self, set = 1):
+        """Set trigger source to INT, EXT, CRC or MAN"""
+        valid = ["INT", "EXT", "CRC", "MAN"]
+        if set not in valid:
+            raise ValueError("Invalid source. It should be one of %s" % (valid))
+        return self.set("TRGSRC", set)
     
-    
+    def trigger(self):
+        """Press the trigger key"""
+        return self.set("*TRG")
+
     # System and Status Commands
     def query_error(self):
         """Query and clear Query Error Register"""
