@@ -1,0 +1,21 @@
+[project]
+name = "usmelt"
+
+description = "Controls microsecond melting laser"
+authors = [
+    {name = "Filipe Maia", email = "filipe.c.maia@gmail.com"},
+]
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.7"
+dependencies = [
+    "pyserial",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "usmelt.__version__"}
