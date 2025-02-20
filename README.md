@@ -1,7 +1,6 @@
 # usmelt
-[![docs workflow](https://github.com/FilipeMaia/sheetjet/actions/workflows/documentation.yml/badge.svg)](https://filipemaia.github.io/sheetjet/)
 
-SheetJet is a python package to control hardware devices necessary to run a sheet jet sample delivery experiment, like the one described in [https://doi.org/10.1107/S2052252523007972](https://doi.org/10.1107/S2052252523007972)
+usmelt is a python package to control hardware devices necessary to run a sheet jet sample delivery experiment, like the one described in [https://doi.org/10.1107/S2052252523007972](https://doi.org/10.1107/S2052252523007972)
 
 It currently controls:
 - TG5012A function generator from Aim-TTi to trigger the Cobolt 06-01 DPL in current modulation
