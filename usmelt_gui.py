@@ -23,7 +23,7 @@ class MelterApp:
         self.pulse_length_label = ttk.Label(master, text="Pulse Length (µs):")
         self.pulse_length_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
 
-        self.pulse_length_var = tk.StringVar(value="10")  # Default value
+        self.pulse_length_var = tk.StringVar(value="20")  # Default value
         self.pulse_length_entry = ttk.Entry(master, textvariable=self.pulse_length_var, width=10)
         self.pulse_length_entry.grid(row=0, column=1, sticky="e", padx=5, pady=5)
         self.pulse_length_entry.bind("<Return>", self.validate_inputs) # Validate on Enter key
@@ -41,9 +41,10 @@ class MelterApp:
         self.pg = usmelt.TG5012A(serial_port=self.device_name)
         self.pg.channel(1)        
         self.pg.wave('PULSE')
-        self.pg.pulse_period(1)
-        self.pg.high(self.pulse_V)
-        self.pg.low(0)
+        # We use a short period so we can repeat the pulse quickly if needed
+        self.pg.pulse_period(10e-3)
+        self.pg.amplitude(self.pulse_V)
+        self.pg.offset(0)
         # 10 ns rise and fall times
         self.pg.pulse_rise(10e-9)
         self.pg.pulse_fall(10e-9)
