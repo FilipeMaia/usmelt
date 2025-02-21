@@ -28,6 +28,15 @@ class MelterApp:
         self.pulse_length_entry.grid(row=0, column=1, sticky="e", padx=5, pady=5)
         self.pulse_length_entry.bind("<Return>", self.validate_inputs) # Validate on Enter key
 
+        # --- Voltage High ---
+        self.voltage_high_label = ttk.Label(master, text="Voltage High (V):")
+        self.voltage_high_label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+
+        self.voltage_high_var = tk.StringVar(value="5")  # Default value
+        self.voltage_high_entry = ttk.Entry(master, textvariable=self.voltage_high_var, width=10)
+        self.voltage_high_entry.grid(row=1, column=1, sticky="e", padx=5, pady=5)
+        self.voltage_high_entry.bind("<Return>", self.validate_inputs) # Validate on Enter key        
+
         # --- Melt Button ---
         self.melt_button = ttk.Button(master, text="Melt! (single pulse)", command=self.melt)
         self.melt_button.grid(row=2, column=0, columnspan=2, pady=10)
@@ -37,14 +46,14 @@ class MelterApp:
         # First find the USB device that corresponds to the pulse generator
         device = usmelt.discover(['TG5012A'])
         self.device_name = device['TG5012A'].device  # Store the device name
-        self.pulse_V = 5.0
         self.pg = usmelt.TG5012A(serial_port=self.device_name)
         self.pg.channel(1)        
         self.pg.wave('PULSE')
         # We use a short period so we can repeat the pulse quickly if needed
         self.pg.pulse_period(10e-3)
-        self.pg.amplitude(self.pulse_V)
-        self.pg.offset(0)
+        self.pg.low(0)
+        #self.pg.amplitude(self.pulse_V)
+        #self.pg.offset(0)
         # 10 ns rise and fall times
         self.pg.pulse_rise(10e-9)
         self.pg.pulse_fall(10e-9)
@@ -61,21 +70,24 @@ class MelterApp:
             pulse_length = int(self.pulse_length_var.get())
             if pulse_length <= 0:
                 raise ValueError("Pulse length must be greater than 0.")
+            voltage_high = float(self.voltage_high_var.get())
+            if voltage_high <= 0:
+                raise ValueError("Pulse length must be greater than 0.")
 
-            return pulse_length  # Return the validated values
+            return pulse_length,voltage_high  # Return the validated values
         except ValueError as e:
             messagebox.showerror("Input Error", str(e))
             return None, None  # Return None if validation fails
 
     def melt(self):
         """Handles the 'Melt!' button click."""
-        pulse_length = self.validate_inputs()
-
+        pulse_length,voltage_high = self.validate_inputs()
         if pulse_length is not None:
             # In a real application, you would send these values to your hardware here.
-            print(f"Melting with pulse length: {pulse_length} µs")
-            #messagebox.showinfo("Melting", f"Melting with:\nPulse Length: {pulse_length} µs\n")
+            print(f"Melting with pulse length: {pulse_length} µs and Voltage High: {voltage_high} V")
+            #messagebox.showinfo("Melting", f"Melting with:\nPulse Length: {pulse_length} µs and Voltage High: {voltage_high} V\n")
             self.pg.pulse_width(pulse_length*1e-6)
+            self.pg.high(voltage_high)            
             self.pg.trigger()
     
 
