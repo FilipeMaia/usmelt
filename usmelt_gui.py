@@ -51,6 +51,10 @@ class MelterApp:
         self.pg.wave('PULSE')
         # We use a short period so we can repeat the pulse quickly if needed
         self.pg.pulse_period(10e-3)
+        # Set a nominal high value, otherwise we:
+        # ValueError: Instrument returned execution error -53
+        # when setting low(0)
+        self.pg.high(1)
         self.pg.low(0)
         #self.pg.amplitude(self.pulse_V)
         #self.pg.offset(0)
