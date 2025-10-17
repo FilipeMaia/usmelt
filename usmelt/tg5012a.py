@@ -4,6 +4,19 @@ import socket
 import serial
 import logging
 
+pg_logger = logging.getLogger('pg_logger')
+pg_logger.setLevel(logging.INFO)
+# 2. Create a handler for the terminal (console).
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.WARNING) # Set the level for this specific handler.
+pg_logger.addHandler(console_handler)
+
+handler = logging.FileHandler('usmelt.log')
+formatter = logging.Formatter('%(asctime)s - %(message)s')
+handler.setFormatter(formatter)
+pg_logger.addHandler(handler)
+pg_logger.propagate = False
+
 class TG5012A:
     """
     Control of the Aim TTi TG5012A function generator.
@@ -29,8 +42,8 @@ class TG5012A:
                 raise ConnectionError("Serial port failed to open")
             try:
                 self.ser = ser
-                logging.info(self.id())
-                logging.info("Successfully connected to TG5012A on %s" % (serial_port))
+                pg_logger.info(self.id())
+                pg_logger.info("Successfully connected to TG5012A on %s" % (serial_port))
             except:
                 ser.close()
                 raise
@@ -39,8 +52,8 @@ class TG5012A:
             self.sock = socket.socket()
             self.sock.connect((address, port))
             try:
-                logging.info(self.id())
-                logging.info("Successfully connected to TG5012A on %s:%d" % (address, port))
+                pg_logger.info(self.id())
+                pg_logger.info("Successfully connected to TG5012A on %s:%d" % (address, port))
             except:
                 self.sock.close()
                 raise
@@ -54,8 +67,8 @@ class TG5012A:
         self.ser.open()
         if(self.ser.is_open != True):
             raise ConnectionError("Serial port failed to open")
-        logging.info("Successfully connected to %s" % (self.ser.port))
-        logging.info(self.id())  
+        pg_logger.info("Successfully connected to %s" % (self.ser.port))
+        pg_logger.info(self.id())  
 
     # Convenience functions
     def pulse(self, freq=1, width=0.1, rise = 0.001, fall = 0.001, high=1, low=0, delay = 0, phase=0, output = "ON"):
@@ -352,6 +365,7 @@ class TG5012A:
         self.write(cmd)
         ret = self.read()
         if cmd != "QER?" and cmd != "EER?" and self.error_check:
+            pg_logger.info("{cmd} returned {ret}".format(cmd=cmd, ret=ret))
             err = self.query_error()
             if int(err) != 0:
                 raise ValueError("Instrument returned query error %s" % (err))        
@@ -359,11 +373,15 @@ class TG5012A:
             self.local()
         return ret
     
-    def set(self, cmd, value=None):
+    def set(self, cmd, value=None):        
         if(value is None):
             ret = self.write(cmd)
         else:
-            ret = self.write(cmd + ' ' + str(value))
+            cmd = cmd + ' ' + str(value)
+            ret = self.write(cmd)
+        if(cmd != "LOCAL"):
+            # Don't log all the LOCAL commands to avoid flooding the log file
+            pg_logger.info(cmd)
         if self.error_check:
             err = self.execution_error()
             if int(err) != 0:
@@ -375,6 +393,7 @@ class TG5012A:
     
     def write(self, str):
         """Write str to the instrument encoded as ascii as terminated"""
+        pg_logger.debug(str)
         bytes = str.encode('ascii') + self.terminator
         if self.sock:
             return self.sock.send(bytes)
@@ -391,4 +410,4 @@ class TG5012A:
         elif self.ser:
             return self.ser.readline().decode('ascii').strip()
         else:
-            raise ConnectionError("No connection to instrument")        
+            raise ConnectionError("No connection to instrument")
