@@ -7,12 +7,13 @@ class MelterApp:
     def __init__(self, master):
         self.master = master
         master.title("Melter Control")
+        self.init_pg()  # Initialize the pulse generator
 
         # --- Title Label ---
-        self.title_label = ttk.Label(master, text="Melting laser (ch1)", font=("Helvetica", 16, "bold"))
+        self.title_label = ttk.Label(master, text="Melting laser (ch1)", font=("Helvetica", 10, "bold"))
         self.title_label.grid(row=0, column=0, columnspan=2, pady=10)
 
-        self.title_label_ch2 = ttk.Label(master, text="Trigger laser (ch2)", font=("Helvetica", 16, "bold"))
+        self.title_label_ch2 = ttk.Label(master, text="Trigger laser (ch2)", font=("Helvetica", 10, "bold"))
         self.title_label_ch2.grid(row=0, column=2, columnspan=2, pady=10)
 
         # --- Enable Checkboxes ---
@@ -24,7 +25,6 @@ class MelterApp:
         self.enable_ch2_check = ttk.Checkbutton(master, text="Enable", variable=self.enable_ch2_var, command=self.toggle_ch2_elements)
         self.enable_ch2_check.grid(row=1, column=2, columnspan=2, pady=5)
 
-        self.init_pg()  # Initialize the pulse generator
 
 
         # --- Menu Bar ---
@@ -153,7 +153,8 @@ class MelterApp:
         self.pg.pulse_delay(0)
         self.pg.burst("NCYC")
         self.pg.burst_count(1)
-        self.pg.trigger_src("MAN")
+        # Take trigger from channel 1
+        self.pg.trigger_src("CRC")
         self.pg.output("OFF")
 
     def validate_inputs(self, event=None):
@@ -216,6 +217,7 @@ class MelterApp:
 
             # Trigger the pulse (assuming one trigger fires both channels)
             if self.enable_ch1_var.get() or self.enable_ch2_var.get():
+                self.pg.channel(1)  # Trigger from channel 1, even if output is off
                 self.pg.trigger()
     
 
