@@ -2,12 +2,23 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import usmelt
 import time
+import configparser
+import os
+import simpleaudio
+import pathlib
 
 class MelterApp:
     def __init__(self, master):
         self.master = master
         master.title("Melter Control")
-        self.init_pg()  # Initialize the pulse generator
+        self.config = configparser.ConfigParser()
+        self.config.read('usmelt.ini')
+
+        try:
+            self.find_and_init_pg()  # Initialize the pulse generator
+        except Exception as e:
+            messagebox.showerror("Device Error", f"Could not connect to device: {e}",icon='error')
+            self.pg = None
 
         # --- Title Label ---
         self.title_label = ttk.Label(master, text="Melting laser (ch1)", font=("Helvetica", 10, "bold"))
@@ -29,11 +40,13 @@ class MelterApp:
 
         # --- Menu Bar ---
         self.menubar = tk.Menu(master)
-        self.filemenu = tk.Menu(self.menubar, tearoff=0)
-        self.filemenu.add_command(label="Set Device...", command=self.set_device)
-        self.filemenu.add_separator()
-        self.filemenu.add_command(label="Exit", command=master.quit)
-        self.menubar.add_cascade(label="Settings", menu=self.filemenu)
+        self.settings_menu = tk.Menu(self.menubar, tearoff=0)
+        self.settings_menu.add_command(label="Set Device...", command=self.set_device)
+        self.melt_sound_var = tk.BooleanVar(value=self.config.getboolean('General', 'MeltSound', fallback=True))
+        self.settings_menu.add_checkbutton(label="Melt sound", variable=self.melt_sound_var, command=self.save_settings)
+        self.settings_menu.add_separator()
+        self.settings_menu.add_command(label="Exit", command=master.quit)
+        self.menubar.add_cascade(label="Settings", menu=self.settings_menu)
         master.config(menu=self.menubar)  # Add the menu bar to the window
 
         # --- Pulse Length ---
@@ -122,12 +135,24 @@ class MelterApp:
         for widget in self.ch2_widgets:
             widget.config(state=state)
 
-    def init_pg(self):
+    def save_settings(self):
+        """Saves settings to the INI file."""
+        if not self.config.has_section('General'):
+            self.config.add_section('General')
+        self.config.set('General', 'MeltSound', str(self.melt_sound_var.get()))
+        with open('usmelt.ini', 'w') as configfile:
+            self.config.write(configfile)
+
+    def find_and_init_pg(self):
+        """Finds and initializes the pulse generator."""
+        self.device_name = ""
         # First find the USB device that corresponds to the pulse generator
         device = usmelt.discover(['TG5012A'])
         self.device_name = device['TG5012A'].device  # Store the device name
-        # self.device_label.config(text=f"Device: {self.device_name}")
         self.pg = usmelt.TG5012A(serial_port=self.device_name)
+        self.init_pg()        
+
+    def init_pg(self):
         # --- Channel 1 settings ---
         self.pg.channel(1)
         self.pg.wave('PULSE')
@@ -186,11 +211,13 @@ class MelterApp:
 
     def melt(self):
         """Handles the 'Melt!' button click."""
+        if self.pg is None:
+            messagebox.showerror("Device Error", "Pulse generator not initialized.")
+            return        
         ch1_params, ch2_params = self.validate_inputs()
         if ch1_params and ch2_params:
             pulse_length1, voltage_high1, delay1 = ch1_params
             pulse_length2, voltage_high2, delay2 = ch2_params
-
             if self.enable_ch1_var.get():
                 print(f"CH1: Pulse: {pulse_length1}µs, Voltage: {voltage_high1}V, Delay: {delay1}µs")
                 # Set parameters for Channel 1
@@ -211,15 +238,19 @@ class MelterApp:
                 self.pg.pulse_width(pulse_length2 * 1e-6)
                 self.pg.high(voltage_high2)
                 self.pg.pulse_delay(delay2 * 1e-6)
-            else:
+            else:            
                 self.pg.channel(2)
                 self.pg.output("OFF")
 
             # Trigger the pulse (assuming one trigger fires both channels)
             if self.enable_ch1_var.get() or self.enable_ch2_var.get():
+                if self.melt_sound_var.get():
+                    sound_effect_path = pathlib.Path(__file__).parent / 'sounds' / 'short-laser-sfx.wav'
+                    wave_obj = simpleaudio.WaveObject.from_wave_file(str(sound_effect_path))
+                    wave_obj.play()
                 self.pg.channel(1)  # Trigger from channel 1, even if output is off
                 self.pg.trigger()
-    
+
 
 
     def set_device(self):
@@ -229,8 +260,12 @@ class MelterApp:
         )
         if new_device is not None:  # Check if the user clicked Cancel
             self.device_name = new_device
-            self.device_label.config(text=f"Device: {self.device_name}")
-            self.pg = usmelt.TG5012A(serial_port=new_device)
+            try:
+                self.pg = usmelt.TG5012A(serial_port=new_device)
+                self.init_pg()  # Re-initialize the pulse generator
+            except Exception as e:
+                messagebox.showerror("Device Error", f"Could not connect to device: {e}")
+                self.pg = None
 
 
 root = tk.Tk()

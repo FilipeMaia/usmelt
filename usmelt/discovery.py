@@ -103,7 +103,9 @@ def read_config(config_file, check_against_ports = True):
         return None
     ret = {}
     for d in config.sections():
-        ret[d] = DeviceInfo.from_config(config[d]) 
+        dev = DeviceInfo.from_config(config[d])
+        if dev is not None:
+            ret[d] = dev
 
     if(check_against_ports is False):
         return ret
