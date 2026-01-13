@@ -10,7 +10,7 @@ license = {text = "BSD-3-Clause"}
 requires-python = ">=3.7"
 dependencies = [
     "pyserial",
-    "simpleaudio",
+    "playsound",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

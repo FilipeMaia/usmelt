@@ -4,7 +4,10 @@ import usmelt
 import time
 import configparser
 import os
-import simpleaudio
+# Use playsound instead of simpleaudio due to
+# avoid the seg fault reported in https://github.com/hamiltron/py-simple-audio/issues/72
+# as simpleaudio is not actively maintained.
+import playsound
 import pathlib
 
 class MelterApp:
@@ -246,8 +249,7 @@ class MelterApp:
             if self.enable_ch1_var.get() or self.enable_ch2_var.get():
                 if self.melt_sound_var.get():
                     sound_effect_path = pathlib.Path(__file__).parent / 'sounds' / 'short-laser-sfx.wav'
-                    wave_obj = simpleaudio.WaveObject.from_wave_file(str(sound_effect_path))
-                    wave_obj.play()
+                    playsound.playsound(str(sound_effect_path))
                 self.pg.channel(1)  # Trigger from channel 1, even if output is off
                 self.pg.trigger()
 
