@@ -417,7 +417,6 @@ class TG5012A:
         
         # 3. Format the binary data block according to IEEE 488.2
         import struct
-        print(points)
         binary_data = struct.pack(f">{len(points)}h", *points)
         
         bytes_len = len(binary_data)
