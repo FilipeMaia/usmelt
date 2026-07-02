@@ -208,7 +208,7 @@ class MelterApp:
         self.pg.pulse_rise(10e-9)
         self.pg.pulse_fall(10e-9)
         self.pg.pulse_delay(0)
-        self.pg.burst("NCYC")
+        self.pg.burst("OFF")
         self.pg.burst_count(1)
         self.pg.trigger_src("MAN")
         self.pg.output("OFF")
@@ -222,7 +222,7 @@ class MelterApp:
         self.pg.pulse_rise(10e-9)
         self.pg.pulse_fall(10e-9)
         self.pg.pulse_delay(0)
-        self.pg.burst("NCYC")
+        self.pg.burst("OFF")
         self.pg.burst_count(1)
         # Take trigger from channel 1
         self.pg.trigger_src("CRC")
@@ -271,6 +271,12 @@ class MelterApp:
             pulse_length1, voltage_high1, delay1 = ch1_params
             pulse_length2, voltage_high2, delay2 = ch2_params
             
+            # Temporarily turn burst mode OFF to allow changing waveforms/functions
+            self.pg.channel(1)
+            self.pg.burst("OFF")
+            self.pg.channel(2)
+            self.pg.burst("OFF")
+            
             if self.enable_ch1_var.get():
                 if self.use_shaping_var.get():
                     v1 = self.shaping_v1.get()
@@ -297,13 +303,13 @@ class MelterApp:
                         vpp = 0.01
                     voffset = (vmax + vmin) / 2.0
                     
-                    # Scale to [-8192, 8191]
+                    # Scale to [0, 2^14 - 1]
                     points = []
                     for v in voltages:
-                        y = int(round(8192.0 * (v - voffset) / (vpp / 2.0)))
-                        y = max(-8192, min(8191, y))
+                        y = int(round((2**14-1) * (v - voffset) / (vpp / 2.0)))
+                        y = max(0, min(2**14-1, y))
                         points.append(y)
-                        
+
                     print(f"CH1 (Shaping): V1: {v1}V for {t1}µs, V2: {v2}V for {t2}µs, Delay: {delay1}µs, Vpp: {vpp:.3f}V, Voffset: {voffset:.3f}V")
                     
                     # Program TG5012A for Channel 1
@@ -312,8 +318,8 @@ class MelterApp:
                     self.pg.upload_arb("ARB1", points, interpolation="OFF")
                     self.pg.set("ARBLOAD", "ARB1")
                     self.pg.wave("ARB")
+                    self.pg.offset(voffset)                    
                     self.pg.amplitude(vpp)
-                    self.pg.offset(voffset)
                     self.pg.period(t_total * 1e-6)
                     self.pg.output("ON")
                 else:
@@ -324,8 +330,10 @@ class MelterApp:
                     self.pg.wave("PULSE")
                     self.pg.output("ON")
                     self.pg.pulse_width(pulse_length1 * 1e-6)
+                    # The order between low and high matters! 
+                    # If low is placed after you seem to get half the voltage
+                    self.pg.low(0.0)                    
                     self.pg.high(voltage_high1)
-                    self.pg.low(0.0)
                     self.pg.pulse_delay(delay1 * 1e-6)
             else:
                 self.pg.channel(1)
@@ -339,8 +347,10 @@ class MelterApp:
                 self.pg.wave("PULSE")
                 self.pg.output("ON")
                 self.pg.pulse_width(pulse_length2 * 1e-6)
+                # The order between low and high matters! 
+                # If low is placed after you seem to get half the voltage                
+                self.pg.low(0.0)                
                 self.pg.high(voltage_high2)
-                self.pg.low(0.0)
                 self.pg.pulse_delay(delay2 * 1e-6)
             else:            
                 self.pg.channel(2)
@@ -348,9 +358,22 @@ class MelterApp:
 
             # Trigger the pulse (assuming one trigger fires both channels)
             if self.enable_ch1_var.get() or self.enable_ch2_var.get():
+                # Re-enable burst mode before triggering
+                self.pg.channel(1)
+                self.pg.burst("NCYC")
+                self.pg.burst_count(1)
+                self.pg.trigger_src("MAN")
+                
+                if self.enable_ch2_var.get():
+                    self.pg.channel(2)
+                    self.pg.burst("NCYC")
+                    self.pg.burst_count(1)
+                    self.pg.trigger_src("CRC")
+                    
                 if self.melt_sound_var.get():
                     sound_effect_path = pathlib.Path(__file__).parent / 'sounds' / 'short-laser-sfx.wav'
                     playsound.playsound(str(sound_effect_path))
+                    
                 self.pg.channel(1)  # Trigger from channel 1, even if output is off
                 self.pg.trigger()
 

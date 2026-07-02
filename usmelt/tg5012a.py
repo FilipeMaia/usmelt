@@ -409,7 +409,7 @@ class TG5012A:
             raise ValueError("Waveform slot must be ARB1, ARB2, ARB3, or ARB4")
             
         # 1. Define the waveform name and interpolation
-        user_name = f'"{name.lower()}"'
+        user_name = name
         self.set("ARBDEF", f"{name},{user_name},{interpolation}")
         
         # 2. Resize the arbitrary waveform slot
@@ -417,6 +417,7 @@ class TG5012A:
         
         # 3. Format the binary data block according to IEEE 488.2
         import struct
+        print(points)
         binary_data = struct.pack(f">{len(points)}h", *points)
         
         bytes_len = len(binary_data)
