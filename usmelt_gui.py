@@ -308,6 +308,7 @@ class MelterApp:
                     
                     # Program TG5012A for Channel 1
                     self.pg.channel(1)
+                    self.pg.output_load(50)
                     self.pg.upload_arb("ARB1", points, interpolation="OFF")
                     self.pg.set("ARBLOAD", "ARB1")
                     self.pg.wave("ARB")
@@ -319,6 +320,7 @@ class MelterApp:
                     print(f"CH1: Pulse: {pulse_length1}µs, Voltage: {voltage_high1}V, Delay: {delay1}µs")
                     # Set parameters for Channel 1
                     self.pg.channel(1)
+                    self.pg.output_load(50)
                     self.pg.wave("PULSE")
                     self.pg.output("ON")
                     self.pg.pulse_width(pulse_length1 * 1e-6)
@@ -333,6 +335,7 @@ class MelterApp:
                 print(f"CH2: Pulse: {pulse_length2}µs, Voltage: {voltage_high2}V, Delay: {delay2}µs")
                 # Set parameters for Channel 2
                 self.pg.channel(2)
+                self.pg.output_load(50)
                 self.pg.wave("PULSE")
                 self.pg.output("ON")
                 self.pg.pulse_width(pulse_length2 * 1e-6)
