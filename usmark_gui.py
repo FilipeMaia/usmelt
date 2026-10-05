@@ -70,7 +70,14 @@ class ImageCanvas(QWidget):
     marker_added = Signal(float, float)
 
     def __init__(self, parent=None):
-        super().__init__(parent)
+        super().__init__()
+
+        # The canvas is embedded inside a QScrollArea later on, so its
+        # real Qt parent is NOT the main window. Keep an explicit
+        # reference to the app instead; voltage_to_color() needs it to
+        # read the color scale endpoints (otherwise it silently fell
+        # back to hardcoded blue and every marker/legend looked blue).
+        self.app = parent
 
         self.setMinimumSize(500, 500)
         self.setMouseTracking(True)
@@ -211,42 +218,48 @@ class ImageCanvas(QWidget):
     # ------------------------------------------------------------------
 
     def voltage_to_color(self, voltage):
-        parent = self.parent()
+        # Use the explicit app reference; self.parent() is unreliable
+        # here because the widget hierarchy may differ from the logical
+        # owner passed in the constructor.
+        app = getattr(self, "app", None)
 
-        if parent is None or not hasattr(parent, "color_min"):
-            return (0, 120, 255)
-
-        app = parent
+        if app is None or not hasattr(app, "color_min"):
+            return (0, 0, 255)
 
         vmin = app.color_min
         vmax = app.color_max
 
         if vmax <= vmin:
-            return (0, 120, 255)
+            return (0, 0, 255)
 
-        t = (voltage - vmin) / (vmax - vmin)
+        if voltage is None:
+            return (0, 0, 255)
+
+        t = (float(voltage) - vmin) / (vmax - vmin)
         t = max(0.0, min(1.0, t))
 
-        # Blue -> green -> yellow -> orange.
-        if t < 1 / 3:
-            u = t * 3
-            r = 0
-            g = int(255 * u)
-            b = int(255 * (1 - u))
+        # Blue -> green -> yellow -> orange
+        # (same colormap as markup.py; an earlier refactor replaced
+        # the anchor colors with a ramp that ended in pure red).
+        blue = (0, 0, 255)
+        green = (0, 255, 0)
+        yellow = (255, 255, 0)
+        orange = (255, 165, 0)
 
-        elif t < 2 / 3:
-            u = (t - 1 / 3) * 3
-            r = int(255 * u)
-            g = 255
-            b = 0
-
+        if t <= 1.0 / 3.0:
+            u = t * 3.0
+            start, end, u = blue, green, u
+        elif t <= 2.0 / 3.0:
+            u = (t - 1.0 / 3.0) * 3.0
+            start, end, u = green, yellow, u
         else:
-            u = (t - 2 / 3) * 3
-            r = 255
-            g = int(255 * (1 - u))
-            b = 0
+            u = (t - 2.0 / 3.0) * 3.0
+            start, end, u = yellow, orange, u
 
-        return (r, g, b)
+        return tuple(
+            int(start[i] + (end[i] - start[i]) * u)
+            for i in range(3)
+        )
 
     # ------------------------------------------------------------------
 
@@ -737,6 +750,9 @@ class WaveformPreview(QWidget):
 
 class MelterPanel(QGroupBox):
     voltage_high1_changed = Signal()
+    # Emitted when the effective CH1 high voltage changes,
+    # i.e. also when pulse shaping is toggled on/off.
+    effective_voltage_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(
@@ -763,6 +779,12 @@ class MelterPanel(QGroupBox):
             "MeltSound",
             fallback=True,
         )
+
+        # Last valid CH1 Voltage High entered by the user.
+        # Kept so that markers keep using the correct value
+        # even while the entry field temporarily holds invalid
+        # or empty text.
+        self.last_valid_voltage_high1 = 5.0
 
         self.use_shaping_value = self.config.getboolean(
             "PulseShaping",
@@ -1121,6 +1143,16 @@ class MelterPanel(QGroupBox):
     # ------------------------------------------------------------------
 
     def on_voltage_high1_changed(self):
+        # Remember the last valid value so that markers keep using
+        # a sensible voltage even while the entry temporarily holds
+        # invalid or empty text (e.g. mid-edit).
+        try:
+            self.last_valid_voltage_high1 = float(
+                self.voltage_high1_entry.text().strip()
+            )
+        except (TypeError, ValueError):
+            pass
+
         self.voltage_high1_changed.emit()
 
     # ------------------------------------------------------------------
@@ -1131,7 +1163,35 @@ class MelterPanel(QGroupBox):
                 self.voltage_high1_entry.text().strip()
             )
         except (TypeError, ValueError):
-            return None
+            # Fall back to the last valid value instead of None,
+            # otherwise every marker typed with an in-between edit
+            # state would be treated as "no voltage" / default.
+            return self.last_valid_voltage_high1
+
+    # ------------------------------------------------------------------
+
+    def get_effective_voltage_high1(self):
+        """
+        Return the CH1 high voltage actually used by the melt pulse.
+
+        In standard mode this is the Voltage High entry. When pulse
+        shaping is enabled, melt() drives the shaped waveform from
+        V1/V2 instead, so the entry value must not be used for the
+        marker colors (this was why markers were stuck at the
+        gradient's lower bound or flagged as Test 5.00 V).
+        """
+
+        if (
+            self.enable_ch1.isChecked()
+            and self.use_shaping.isChecked()
+        ):
+            return max(
+                0.0,
+                float(self.shaping_v1),
+                float(self.shaping_v2),
+            )
+
+        return self.get_voltage_high1()
 
     # ------------------------------------------------------------------
 
@@ -1162,6 +1222,10 @@ class MelterPanel(QGroupBox):
         self.setup_shaping_button.setEnabled(
             enabled
         )
+
+        # The effective CH1 voltage depends on whether shaping is
+        # active, so the marker status/colors must be refreshed.
+        self.effective_voltage_changed.emit()
 
     # ------------------------------------------------------------------
 
@@ -2023,6 +2087,10 @@ class MelterPanel(QGroupBox):
 
             self.save_settings()
 
+            # Shaping voltages feed the marker color scale when
+            # shaping is active — refresh the status/colors.
+            self.effective_voltage_changed.emit()
+
             dialog.accept()
 
         ok_button.clicked.connect(
@@ -2586,6 +2654,12 @@ class ImageMarkerApp(QMainWindow):
             self.update_marker_voltage_state
         )
 
+        # Shaping toggles / shaping voltage changes also modify the
+        # effective CH1 voltage used for marker colors.
+        self.melter.effective_voltage_changed.connect(
+            self.update_marker_voltage_state
+        )
+
         self.update_marker_voltage_state()
 
     # ------------------------------------------------------------------
@@ -2602,7 +2676,9 @@ class ImageMarkerApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def get_current_voltage(self):
-        return self.melter.get_voltage_high1()
+        # Use the effective CH1 voltage (shaping-aware), not just
+        # whatever the Voltage High entry happens to contain.
+        return self.melter.get_effective_voltage_high1()
 
     # ------------------------------------------------------------------
 
@@ -2637,6 +2713,11 @@ class ImageMarkerApp(QMainWindow):
         self.test_checkbox.setChecked(
             self.current_is_test
         )
+
+        # Refresh marker rendering so the voltage/status shown in
+        # the panel always matches the colors of the markers.
+        if self.canvas.base_image is not None:
+            self.canvas.render_image()
 
     # ------------------------------------------------------------------
 
@@ -2754,6 +2835,10 @@ class ImageMarkerApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def color_range_changed(self):
+        # Always keep the app-level endpoints in sync with the
+        # spin boxes; voltage_to_color() reads these values and
+        # silently falls back to blue when vmax <= vmin, which is
+        # exactly the "all markers are blue" symptom.
         self.color_min = (
             self.color_min_spin.value()
         )
@@ -2763,6 +2848,13 @@ class ImageMarkerApp(QMainWindow):
         )
 
         if self.color_max <= self.color_min:
+            QMessageBox.warning(
+                self,
+                "Color Scale",
+                "Maximum voltage must be greater than "
+                "minimum voltage.",
+            )
+
             return
 
         self.canvas.render_image()
