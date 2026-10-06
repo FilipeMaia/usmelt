@@ -269,20 +269,48 @@ class ImageCanvas(QWidget):
 
     def zoom_by(self, factor, center=None):
         old_zoom = self.zoom
-        self.zoom *= factor
-        self.zoom = max(0.05, min(self.zoom, 20.0))
 
-        if center is None:
-            center = QPoint(self.width() // 2, self.height() // 2)
+        new_zoom = max(0.05, min(old_zoom * factor, 20.0))
 
-        if old_zoom != self.zoom:
-            scale = self.zoom / old_zoom
+        if new_zoom == old_zoom:
+            return
 
-            cx = center.x()
-            cy = center.y()
+        scale = new_zoom / old_zoom
+        self.zoom = new_zoom
 
-            self.pan_x = cx - (cx - self.pan_x) * scale
-            self.pan_y = cy - (cy - self.pan_y) * scale
+        # The displayed image rect is always centered in the widget plus
+        # the pan offset (see update_display_rect), so under a pure zoom
+        # it scales about the widget center — not about the cursor. To
+        # keep the image point currently under the cursor pinned there,
+        # solve for the pan that places that same image point back under
+        # the cursor after the zoom.
+        x = self.display_rect.x()
+        y = self.display_rect.y()
+        w = self.display_rect.width()
+        h = self.display_rect.height()
+
+        if w <= 0 or h <= 0:
+            self.render_image()
+            return
+
+        if center is not None:
+            ax = float(center.x())
+            ay = float(center.y())
+        else:
+            ax = self.width() / 2.0
+            ay = self.height() / 2.0
+
+        # Fractional position of the anchor within the current image rect.
+        u = (ax - x) / w
+        v = (ay - y) / h
+
+        new_w = w * scale
+        new_h = h * scale
+
+        # New rect center is (widget_size/2 + pan); choose pan so that
+        # anchor = center + (u - 1/2) * new_size.
+        self.pan_x = ax - (self.width() - new_w) / 2.0 - u * new_w
+        self.pan_y = ay - (self.height() - new_h) / 2.0 - v * new_h
 
         self.render_image()
 
