@@ -1,10 +1,20 @@
 import sys
 import math
 import copy
+import argparse
 import configparser
 from pathlib import Path
 
-import winsound
+# Offline mode: set from the command line (-o / --offline).
+# When True, the application never attempts to discover or open
+# a connection to the external pulse generator.  Defaults to False
+# so importing this module keeps the original behavior.
+OFFLINE_MODE = False
+
+try:
+    import winsound
+except ImportError:  # non-Windows platforms (e.g. offline testing)
+    winsound = None
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -757,11 +767,14 @@ class MelterPanel(QGroupBox):
     # i.e. also when pulse shaping is toggled on/off.
     effective_voltage_changed = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, offline=False):
         super().__init__(
-            "USMELT",
+            "USMELT (offline)" if offline else "USMELT",
             parent,
         )
+
+        # Offline mode: never discover/open the pulse generator.
+        self.offline = bool(offline) or OFFLINE_MODE
 
         self.pg = None
         self.device_name = ""
@@ -821,9 +834,15 @@ class MelterPanel(QGroupBox):
 
         self.build_ui()
 
-        # IMPORTANT:
-        # Use the original USMELT discovery and initialization path.
-        self.find_and_init_pg()
+        if self.offline:
+            # IMPORTANT: in offline mode we must not touch the
+            # device at all -- skip USMELT discovery/initialization.
+            self.pg = None
+            self.device_name = ""
+        else:
+            # IMPORTANT:
+            # Use the original USMELT discovery and initialization path.
+            self.find_and_init_pg()
 
         self.update_channel_states()
 
@@ -1053,6 +1072,18 @@ class MelterPanel(QGroupBox):
             36
         )
 
+        if self.offline:
+            # No device in offline mode: the Melt button is
+            # unavailable, but all parameter fields stay editable.
+            self.melt_button.setEnabled(False)
+            self.melt_button.setText(
+                "Melt (offline — no device)"
+            )
+            self.melt_button.setToolTip(
+                "Disabled because the application was started "
+                "with --offline; no pulse generator is connected."
+            )
+
         self.melt_button.clicked.connect(
             self.melt
         )
@@ -1202,6 +1233,13 @@ class MelterPanel(QGroupBox):
         enabled = self.enable_ch1.isChecked()
         shaping = self.use_shaping.isChecked()
 
+        # In offline mode the Enable checkbox is only used to decide
+        # whether the parameter fields are editable; it must not
+        # disable the voltage / pulse-length inputs, because markers
+        # still read their values from these fields.
+        if self.offline:
+            enabled = True
+
         # Delay is available whenever CH1 is enabled.
         self.delay1_entry.setEnabled(
             enabled
@@ -1234,6 +1272,11 @@ class MelterPanel(QGroupBox):
 
     def toggle_ch2_elements(self):
         enabled = self.enable_ch2.isChecked()
+
+        # Same as Channel 1: keep the fields editable in offline
+        # mode regardless of the Enable checkbox.
+        if self.offline:
+            enabled = True
 
         self.pulse_length2_entry.setEnabled(
             enabled
@@ -1507,6 +1550,18 @@ class MelterPanel(QGroupBox):
 
         The hardware API calls follow the original USMELT code.
         """
+
+        if self.offline:
+            # Should not normally happen (button is disabled), but
+            # guard against keyboard activation or programmatic use.
+            QMessageBox.information(
+                self,
+                "Offline mode",
+                "The application was started with --offline, "
+                "so no pulse generator is connected and melting "
+                "is disabled.",
+            )
+            return
 
         if self.pg is None:
             QMessageBox.critical(
@@ -2118,6 +2173,15 @@ class MelterPanel(QGroupBox):
         Original USMELT Set Device behavior.
         """
 
+        if self.offline:
+            QMessageBox.information(
+                self,
+                "Offline mode",
+                "Device connections are disabled because the "
+                "application was started with --offline.",
+            )
+            return
+
         serial_port, ok = QInputDialog.getText(
             self,
             "Set Device",
@@ -2157,11 +2221,20 @@ class MelterPanel(QGroupBox):
 # ----------------------------------------------------------------------
 
 class ImageMarkerApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, offline=None):
         super().__init__()
 
+        # Resolve offline mode: explicit argument wins, otherwise
+        # fall back to the module-level flag set from argv.
+        if offline is None:
+            offline = OFFLINE_MODE
+
+        self.offline = bool(offline)
+
         self.setWindowTitle(
-            "USMELT + Image Marker"
+            "USMELT + Image Marker (offline)"
+            if self.offline
+            else "USMELT + Image Marker"
         )
 
         self.resize(
@@ -2291,11 +2364,24 @@ class ImageMarkerApp(QMainWindow):
         # USMELT
         # --------------------------------------------------------------
 
-        self.melter = MelterPanel()
+        self.melter = MelterPanel(
+            offline=self.offline
+        )
 
         left_layout.addWidget(
             self.melter
         )
+
+        if self.offline:
+            # Grey out the Settings / "Set Device" menu entry, since
+            # no device connection can be made in offline mode.
+            for action in self.menuBar().actions():
+                if action.text() == "Settings":
+                    for act in action.menu().actions():
+                        if act.text() == "Set Device":
+                            act.setEnabled(False)
+                            break
+                    break
 
         self.melt_sound_action.setChecked(
             self.melter.melt_sound
@@ -2711,6 +2797,7 @@ class ImageMarkerApp(QMainWindow):
 
         self.voltage_status_label.setText(
             f"Voltage: {voltage:.2f} V"
+            + (" (offline)" if getattr(self, "offline", False) else "")
         )
 
         self.test_checkbox.setChecked(
@@ -3342,12 +3429,66 @@ class ImageMarkerApp(QMainWindow):
 # Application entry point
 # ----------------------------------------------------------------------
 
-def main():
-    app = QApplication(
-        sys.argv
+def parse_args(argv=None):
+    """
+    Parse command-line options.
+
+    The only current option is offline mode (-o / --offline), which
+    starts the GUI without ever attempting to connect to the external
+    pulse generator (Melt is disabled, all parameter fields remain
+    editable for marking images).
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="usmark_gui",
+        description=(
+            "USMELT + Image Marker. Combine image marking with "
+            "pulse-generator control."
+        ),
     )
 
-    window = ImageMarkerApp()
+    parser.add_argument(
+        "-o",
+        "--offline",
+        action="store_true",
+        help=(
+            "Run without connecting to the external pulse "
+            "generator. The Melt button is disabled, but images "
+            "can still be marked and exported."
+        ),
+    )
+
+    # Qt occasionally leaves extra args in sys.argv; ignore unknown
+    # options instead of erroring out on them.
+    args, _unknown = parser.parse_known_args(argv)
+
+    return args
+
+
+def main():
+    args = parse_args()
+
+    # Make the flag available module-wide so any component created
+    # later (e.g. MelterPanel via its default) picks it up too.
+    global OFFLINE_MODE
+
+    OFFLINE_MODE = args.offline
+
+    if OFFLINE_MODE:
+        print(
+            "Offline mode: no attempt will be made to connect "
+            "to the pulse generator."
+        )
+
+    # QApplication takes a *clean* argv (no our flags), otherwise
+    # Qt may choke on the unrecognized -o/--offline arguments.
+    app = QApplication(
+        [sys.argv[0]]
+    )
+
+    window = ImageMarkerApp(
+        offline=OFFLINE_MODE
+    )
 
     window.show()
 
