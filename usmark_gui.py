@@ -3387,16 +3387,36 @@ class ImageMarkerApp(QMainWindow):
                 )
 
             # ----------------------------------------------------------
-            # Legend (scales with the exported image size)
+            # Legend (scales with the exported image size).  When it
+            # would dominate the picture, the canvas is widened instead
+            # and the legend is drawn in the new right-hand strip.
             # ----------------------------------------------------------
 
-            legend_w, legend_h = self.legend_size(image)
+            key_items = self.shape_key_items()
 
-            if (
-                legend_w < image.width
-                and legend_h < image.height
-            ):
-                image = self.create_legend(image)
+            (
+                canvas_w,
+                canvas_h,
+                legend_w,
+                legend_h,
+                legend_x,
+                legend_y,
+            ) = self.legend_layout(
+                image.width, image.height, key_items=key_items
+            )
+
+            if canvas_w != image.width or canvas_h != image.height:
+                extended = Image.new(
+                    "RGB", (canvas_w, canvas_h), (255, 255, 255)
+                )
+                extended.paste(image, (0, 0))
+                image = extended
+
+            image = self.create_legend(
+                image,
+                key_items=key_items,
+                place=(legend_w, legend_h, legend_x, legend_y),
+            )
 
             image.save(
                 file_name
