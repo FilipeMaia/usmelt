@@ -6,7 +6,10 @@ from pathlib import Path
 
 import winsound
 
-from PIL import Image, ImageDraw, ImageFont
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:  # allow headless testing of the pure-Python parts
+    Image = ImageDraw = ImageFont = None
 
 from PySide6.QtCore import Qt, QRectF, QPoint, Signal
 from PySide6.QtGui import (
@@ -3094,272 +3097,16 @@ class ImageMarkerApp(QMainWindow):
                 )
 
             # ----------------------------------------------------------
-            # Legend
+            # Legend (scales with the exported image size)
             # ----------------------------------------------------------
 
-            legend_width = 150
-            legend_height = 170
+            legend_w, legend_h = self.legend_size(image)
 
-            margin = 15
-
-            legend_x = (
-                image.width
-                - legend_width
-                - margin
-            )
-
-            legend_y = margin
-
-            overlay = Image.new(
-                "RGBA",
-                (
-                    legend_width,
-                    legend_height,
-                ),
-                (
-                    255,
-                    255,
-                    255,
-                    235,
-                ),
-            )
-
-            overlay_draw = ImageDraw.Draw(
-                overlay
-            )
-
-            overlay_draw.rectangle(
-                [
-                    0,
-                    0,
-                    legend_width - 1,
-                    legend_height - 1,
-                ],
-                outline=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                width=2,
-            )
-
-            font = ImageFont.load_default()
-
-            title = "Voltage"
-
-            title_bbox = (
-                overlay_draw.textbbox(
-                    (0, 0),
-                    title,
-                    font=font,
-                )
-            )
-
-            title_width = (
-                title_bbox[2]
-                - title_bbox[0]
-            )
-
-            overlay_draw.text(
-                (
-                    (
-                        legend_width
-                        - title_width
-                    )
-                    / 2,
-                    10,
-                ),
-                title,
-                fill=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                font=font,
-            )
-
-            bar_left = 30
-            bar_top = 42
-            bar_width = 28
-            bar_height = 95
-
-            for i in range(
-                bar_height
+            if (
+                legend_w < image.width
+                and legend_h < image.height
             ):
-                t = (
-                    i
-                    / max(
-                        1,
-                        bar_height - 1,
-                    )
-                )
-
-                voltage = (
-                    self.color_max
-                    - t
-                    * (
-                        self.color_max
-                        - self.color_min
-                    )
-                )
-
-                color = (
-                    self.canvas.voltage_to_color(
-                        voltage
-                    )
-                )
-
-                overlay_draw.line(
-                    [
-                        bar_left,
-                        bar_top + i,
-                        bar_left
-                        + bar_width,
-                        bar_top + i,
-                    ],
-                    fill=(
-                        *color,
-                        255,
-                    ),
-                    width=1,
-                )
-
-            overlay_draw.rectangle(
-                [
-                    bar_left,
-                    bar_top,
-                    bar_left + bar_width,
-                    bar_top + bar_height,
-                ],
-                outline=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                width=1,
-            )
-
-            overlay_draw.text(
-                (
-                    bar_left
-                    + bar_width
-                    + 10,
-                    bar_top - 4,
-                ),
-                f"{self.color_max:.2f}",
-                fill=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                font=font,
-            )
-
-            mid = (
-                self.color_min
-                + self.color_max
-            ) / 2
-
-            overlay_draw.text(
-                (
-                    bar_left
-                    + bar_width
-                    + 10,
-                    bar_top
-                    + bar_height / 2
-                    - 4,
-                ),
-                f"{mid:.2f}",
-                fill=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                font=font,
-            )
-
-            overlay_draw.text(
-                (
-                    bar_left
-                    + bar_width
-                    + 10,
-                    bar_top
-                    + bar_height
-                    - 7,
-                ),
-                f"{self.color_min:.2f}",
-                fill=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                font=font,
-            )
-
-            # Test marker key.
-            test_y = 148
-
-            overlay_draw.ellipse(
-                [
-                    15,
-                    test_y,
-                    25,
-                    test_y + 10,
-                ],
-                fill=(
-                    255,
-                    0,
-                    0,
-                    255,
-                ),
-                outline=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-            )
-
-            overlay_draw.text(
-                (
-                    32,
-                    test_y - 1,
-                ),
-                "Test = 5.00 V",
-                fill=(
-                    0,
-                    0,
-                    0,
-                    255,
-                ),
-                font=font,
-            )
-
-            image_rgba = (
-                image.convert(
-                    "RGBA"
-                )
-            )
-
-            image_rgba.alpha_composite(
-                overlay,
-                (
-                    legend_x,
-                    legend_y,
-                ),
-            )
-
-            image = (
-                image_rgba.convert(
-                    "RGB"
-                )
-            )
+                image = self.create_legend(image)
 
             image.save(
                 file_name
@@ -3371,6 +3118,224 @@ class ImageMarkerApp(QMainWindow):
                 "Export",
                 f"Could not export image:\n\n{exc}",
             )
+
+    # ------------------------------------------------------------------
+    # Voltage legend (drawn onto exported images)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def legend_size(image):
+        """
+        Legend box size scaled to the exported image.
+
+        The legend occupies a constant *fraction* of the image area
+        (~3%), so it always covers roughly the same portion of the
+        picture regardless of resolution - sized to stay readable when
+        the export is viewed full-screen on a ~16" display (err on the
+        large side).  Aspect ratio is width:height = 5:7, noticeably
+        narrower/taller than the old fixed 150x170 box.
+        """
+        # Design grid: a 150 x 210 px legend for a 640 x 480 image
+        # (same footprint as the old fixed-size legend at that size,
+        # but narrower/taller: aspect ratio 5:7 instead of 150:170).
+        scale = math.sqrt(
+            image.width * image.height / (640.0 * 480.0)
+        )
+
+        width = int(round(150 * scale))
+        height = int(round(210 * scale))
+
+        # Never smaller than the old fixed-size legend...
+        if width < 150 or height < 210:
+            width = max(width, 150)
+            height = max(height, 210)
+
+            # ...unless that would exceed a quarter of a small image;
+            # in that case shrink back proportionally instead.
+            if (
+                width > image.width // 4
+                or height > image.height // 4
+            ):
+                width = int(round(150 * scale))
+                height = int(round(210 * scale))
+
+        # Never larger than a quarter of the image.
+        width = min(width, max(1, image.width // 4))
+        height = min(height, max(1, image.height // 4))
+
+        # Restore the 5:7 aspect ratio whenever a clamp above distorted
+        # it (shrinking the larger dimension rather than growing the
+        # smaller one, so the box always fits inside the image).
+        if width / height > 5.0 / 7.0:
+            width = int(round(height * 5.0 / 7.0))
+        else:
+            height = int(round(width * 7.0 / 5.0))
+
+        return width, height
+
+    @staticmethod
+    def _legend_font(size):
+        # Prefer a real TrueType font (crisper at large sizes); fall
+        # back to PIL's default bitmap/scaled font if unavailable.
+        for path in (
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:  # older Pillow without the size parameter
+            return ImageFont.load_default()
+
+    def create_legend(self, image):
+        """
+        Composite a semi-transparent voltage-gradient legend onto the
+        top-right corner of ``image`` (an RGB PIL.Image).  Returns a new
+        RGB image; the input is not modified.
+        """
+        lw, lh = self.legend_size(image)
+
+        # Layout unit: fit a 150 x 210 design grid inside the box while
+        # keeping the content proportions correct for any clamped size.
+        s = min(lw / 150.0, lh / 210.0)
+
+        # Center the design horizontally when the box is wider than tall
+        # proportions imply (e.g. after a height clamp).
+        ox = max(0.0, (lw - 150.0 * s) / 2.0)
+
+        margin = max(4, int(round(15 * s)))
+
+        legend_x = image.width - lw - margin
+        legend_y = margin
+
+        overlay = Image.new(
+            "RGBA",
+            (lw, lh),
+            (255, 255, 255, 235),
+        )
+
+        od = ImageDraw.Draw(overlay)
+
+        border = max(2, int(round(2 * s)))
+
+        od.rectangle(
+            [0, 0, lw - 1, lh - 1],
+            outline=(0, 0, 0, 255),
+            width=border,
+        )
+
+        title_font = self._legend_font(max(10, int(round(20 * s))))
+        label_font = self._legend_font(max(9, int(round(16 * s))))
+
+        title = "Voltage (kV)"
+
+        tb = od.textbbox((0, 0), title, font=title_font)
+
+        od.text(
+            ((lw - (tb[2] - tb[0])) / 2.0, 12 * s),
+            title,
+            fill=(0, 0, 0, 255),
+            font=title_font,
+        )
+
+        # Gradient bar: blue (bottom, Min) -> green -> yellow -> orange
+        # (top, Max).  Narrower than before (bar takes ~1/3 of width).
+        bar_left = ox + 40 * s
+        bar_top = 45 * s
+        bar_width = 45 * s
+        bar_height = lh - bar_top - 50 * s
+
+        if bar_height < 20 * s:  # degenerate box; keep drawing sane
+            bar_height = 20 * s
+
+        vmax = self.color_max
+        vmin = self.color_min
+
+        for i in range(int(bar_height)):
+            t = i / max(1.0, bar_height - 1.0)
+
+            color = self.canvas.voltage_to_color(
+                vmax - t * (vmax - vmin)
+            )
+
+            y = int(bar_top + i)
+
+            od.line(
+                [bar_left, y, bar_left + bar_width, y],
+                fill=(*color, 255),
+                width=1,
+            )
+
+        od.rectangle(
+            [
+                int(bar_left),
+                int(bar_top),
+                int(bar_left + bar_width),
+                int(bar_top + bar_height),
+            ],
+            outline=(0, 0, 0, 255),
+            width=1,
+        )
+
+        label_x = bar_left + bar_width + 12 * s
+
+        def draw_label(text, cy):
+            bbox = od.textbbox((0, 0), text, font=label_font)
+            th = bbox[3] - bbox[1]
+
+            od.text(
+                (label_x, cy - th / 2.0 - bbox[1]),
+                text,
+                fill=(0, 0, 0, 255),
+                font=label_font,
+            )
+
+        draw_label(f"{vmax:.2f}", bar_top)
+        draw_label(f"{(vmin + vmax) / 2.0:.2f}", bar_top + bar_height / 2.0)
+        draw_label(f"{vmin:.2f}", bar_top + bar_height)
+
+        # Test-marker key along the bottom.
+        dot_r = 9.0 * s
+        dot_cx = ox + 15 * s
+        dot_cy = lh - 25 * s
+
+        od.ellipse(
+            [
+                dot_cx,
+                dot_cy - dot_r,
+                dot_cx + 2 * dot_r,
+                dot_cy + dot_r,
+            ],
+            fill=(255, 0, 0, 255),
+            outline=(0, 0, 0, 255),
+            width=1,
+        )
+
+        test_bbox = od.textbbox(
+            (0, 0), "Test = 5.00 V", font=label_font
+        )
+
+        od.text(
+            (
+                dot_cx + 2 * dot_r + 10 * s,
+                dot_cy
+                - (test_bbox[3] - test_bbox[1]) / 2.0
+                - test_bbox[1],
+            ),
+            "Test = 5.00 V",
+            fill=(0, 0, 0, 255),
+            font=label_font,
+        )
+
+        rgba = image.convert("RGBA")
+
+        rgba.alpha_composite(overlay, (int(legend_x), int(legend_y)))
+
+        return rgba.convert("RGB")
 
 
 # ----------------------------------------------------------------------
