@@ -21,7 +21,7 @@ try:
 except ImportError:  # allow headless testing of the pure-Python parts
     Image = ImageDraw = ImageFont = None
 
-from PySide6.QtCore import Qt, QRectF, QPoint, Signal
+from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -35,6 +35,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -48,6 +49,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSlider,
     QVBoxLayout,
@@ -66,13 +68,133 @@ import usmelt
 # Marker data
 # ----------------------------------------------------------------------
 
+MARKER_SHAPES = ("circle", "triangle", "square", "star")
+
+
+def draw_marker_shape(draw, shape, cx, cy, size, fill, outline=(0, 0, 0),
+                      width=None):
+    """Draw a marker of the given shape centered at (cx, cy).
+
+    All shapes fit inside a circle of diameter ``size`` so they look
+    visually balanced next to each other.  Coloring is identical for
+    every shape - only the geometry changes.
+    """
+    if width is None:
+        width = max(1, int(size / 8))
+
+    r = size / 2.0
+    bbox = [cx - r, cy - r, cx + r, cy + r]
+
+    if shape == "circle":
+        draw.ellipse(bbox, fill=fill, outline=outline, width=width)
+        return
+
+    if shape == "square":
+        # Square inscribed in the same circle as the other shapes.
+        half = r / math.sqrt(2.0)
+        draw.polygon(
+            [
+                (cx - half, cy - half),
+                (cx + half, cy - half),
+                (cx + half, cy + half),
+                (cx - half, cy + half),
+            ],
+            fill=fill,
+            outline=outline,
+            width=width,
+        )
+        return
+
+    if shape == "triangle":
+        # Equilateral triangle pointing up, vertices on the circle.
+        pts = []
+        for k in range(3):
+            ang = math.radians(-90.0 + k * 120.0)
+            pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+        draw.polygon(pts, fill=fill, outline=outline, width=width)
+        return
+
+    if shape == "star":
+        # Classic five-point star alternating outer/inner radii.
+        inner = r * 0.45
+        pts = []
+        for k in range(10):
+            ang = math.radians(-90.0 + k * 36.0)
+            rad = r if k % 2 == 0 else inner
+            pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+        draw.polygon(pts, fill=fill, outline=outline, width=width)
+        return
+
+    # Unknown shape: fall back to a circle.
+    draw.ellipse(bbox, fill=fill, outline=outline, width=width)
+
+
 class Marker:
-    def __init__(self, x, y, size=15, voltage=0.0, is_test=False):
+    def __init__(self, x, y, size=15, voltage=0.0, is_test=False,
+                 shape="circle"):
         self.x = float(x)
         self.y = float(y)
         self.size = int(size)
         self.voltage = float(voltage)
         self.is_test = bool(is_test)
+        self.shape = str(shape) if shape in MARKER_SHAPES else "circle"
+
+
+# ----------------------------------------------------------------------
+# Shape preview icon (drawn with QPainter for the toolbar rows)
+# ----------------------------------------------------------------------
+
+class ShapeIconWidget(QWidget):
+    """Small fixed-size widget that paints a single marker shape."""
+
+    def __init__(self, shape="circle", parent=None):
+        super().__init__(parent)
+
+        self.shape = shape if shape in MARKER_SHAPES else "circle"
+
+        self.setFixedSize(28, 28)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+
+        cx = w / 2.0
+        cy = h / 2.0
+
+        r = min(w, h) / 2.0 - 3.0
+
+        painter.setPen(QPen(QColor(0, 0, 0), 1.5))
+        painter.setBrush(QColor(120, 120, 120))
+
+        if self.shape == "circle":
+            painter.drawEllipse(QRectF(cx - r, cy - r, 2 * r, 2 * r))
+
+        elif self.shape == "square":
+            half = r / math.sqrt(2.0)
+            painter.drawRect(
+                QRectF(cx - half, cy - half, 2 * half, 2 * half))
+
+        elif self.shape == "triangle":
+            pts = QPolygonF()
+            for k in range(3):
+                ang = math.radians(-90.0 + k * 120.0)
+                pts.append(QPointF(cx + r * math.cos(ang),
+                                   cy + r * math.sin(ang)))
+            painter.drawPolygon(pts)
+
+        elif self.shape == "star":
+            inner = r * 0.45
+            pts = QPolygonF()
+            for k in range(10):
+                ang = math.radians(-90.0 + k * 36.0)
+                rad = r if k % 2 == 0 else inner
+                pts.append(QPointF(cx + rad * math.cos(ang),
+                                   cy + rad * math.sin(ang)))
+            painter.drawPolygon(pts)
 
 
 # ----------------------------------------------------------------------
@@ -200,20 +322,13 @@ class ImageCanvas(QWidget):
             else:
                 fill = self.voltage_to_color(marker.voltage)
 
-            r = marker.size / 2.0
-
-            bbox = [
-                marker.x - r,
-                marker.y - r,
-                marker.x + r,
-                marker.y + r,
-            ]
-
-            draw.ellipse(
-                bbox,
-                fill=fill,
-                outline=(0, 0, 0),
-                width=max(1, int(marker.size / 8)),
+            draw_marker_shape(
+                draw,
+                getattr(marker, "shape", "circle"),
+                marker.x,
+                marker.y,
+                marker.size,
+                fill,
             )
 
         if abs(self.rotation) > 1e-9:
@@ -2463,6 +2578,103 @@ class ImageMarkerApp(QMainWindow):
         )
 
         # --------------------------------------------------------------
+        # Marker shapes
+        #
+        # One row per shape in the left tool bar: selection bubble
+        # (radio button), a drawn preview of the shape, and a text
+        # box for a short description that appears in the exported
+        # figure legend when more than one shape is used.
+        # --------------------------------------------------------------
+
+        shape_group = QGroupBox(
+            "Marker Shapes"
+        )
+
+        shape_grid = QGridLayout(
+            shape_group
+        )
+
+        self.shape_buttons = {}
+        self.shape_descriptions = {}
+
+        self.shape_button_group = QButtonGroup(
+            self
+        )
+
+        self.shape_button_group.setExclusive(
+            True
+        )
+
+        for row_index, shape_name in enumerate(MARKER_SHAPES):
+            radio = QRadioButton()
+
+            radio.setToolTip(
+                f"Place new markers as a {shape_name}."
+            )
+
+            self.shape_button_group.addButton(
+                radio
+            )
+
+            self.shape_buttons[shape_name] = radio
+
+            icon = ShapeIconWidget(
+                shape_name
+            )
+
+            desc_edit = QLineEdit()
+
+            desc_edit.setPlaceholderText(
+                f"Description for {shape_name} markers…"
+            )
+
+            desc_edit.setToolTip(
+                "Short label shown next to this shape in the "
+                "exported figure legend (used when multiple "
+                "shapes appear on the image)."
+            )
+
+            self.shape_descriptions[shape_name] = desc_edit
+
+            shape_grid.addWidget(
+                radio,
+                row_index,
+                0,
+            )
+
+            shape_grid.addWidget(
+                icon,
+                row_index,
+                1,
+            )
+
+            shape_grid.addWidget(
+                desc_edit,
+                row_index,
+                2,
+            )
+
+        shape_grid.setColumnStretch(
+            2,
+            1,
+        )
+
+        # Circle is the default shape.
+        self.shape_buttons["circle"].setChecked(
+            True
+        )
+
+        self.current_shape = "circle"
+
+        self.shape_button_group.buttonClicked.connect(
+            self._on_shape_selected
+        )
+
+        marker_layout.addWidget(
+            shape_group
+        )
+
+        # --------------------------------------------------------------
         # Voltage / Test status
         # --------------------------------------------------------------
 
@@ -2764,6 +2976,14 @@ class ImageMarkerApp(QMainWindow):
 
     # ------------------------------------------------------------------
 
+    def _on_shape_selected(self, button):
+        for name, btn in self.shape_buttons.items():
+            if btn is button:
+                self.current_shape = name
+                return
+
+    # ------------------------------------------------------------------
+
     def get_current_voltage(self):
         # Use the effective CH1 voltage (shaping-aware), not just
         # whatever the Voltage High entry happens to contain.
@@ -2847,6 +3067,7 @@ class ImageMarkerApp(QMainWindow):
                 5.0,
                 abs_tol=1e-9,
             ),
+            shape=getattr(self, "current_shape", "circle"),
         )
 
         self.markers.append(
@@ -3141,31 +3362,13 @@ class ImageMarkerApp(QMainWindow):
                         )
                     )
 
-                r = (
-                    marker.size
-                    / 2.0
-                )
-
-                draw.ellipse(
-                    [
-                        marker.x - r,
-                        marker.y - r,
-                        marker.x + r,
-                        marker.y + r,
-                    ],
-                    fill=fill,
-                    outline=(
-                        0,
-                        0,
-                        0,
-                    ),
-                    width=max(
-                        1,
-                        int(
-                            marker.size
-                            / 8
-                        ),
-                    ),
+                draw_marker_shape(
+                    draw,
+                    getattr(marker, "shape", "circle"),
+                    marker.x,
+                    marker.y,
+                    marker.size,
+                    fill,
                 )
 
             # Rotate.
@@ -3210,8 +3413,41 @@ class ImageMarkerApp(QMainWindow):
     # Voltage legend (drawn onto exported images)
     # ------------------------------------------------------------------
 
+    def used_shapes(self):
+        """Distinct marker shapes present on the current image."""
+        seen = []
+        for marker in self.markers:
+            shape = getattr(marker, "shape", "circle")
+            if shape not in seen:
+                seen.append(shape)
+        return seen
+
+    def shape_key_items(self):
+        """
+        Build the shape/description key entries for the figure legend.
+
+        Returns a list of ``(shape_name, description)`` tuples, or an
+        empty list when no key is needed (fewer than two distinct
+        shapes on the image).  Shapes without a user description fall
+        back to their name.
+        """
+        shapes = self.used_shapes()
+
+        if len(shapes) < 2:
+            return []
+
+        items = []
+        for shape in shapes:
+            edit = self.shape_descriptions.get(shape)
+            desc = edit.text().strip() if edit is not None else ""
+            if not desc:
+                desc = shape.capitalize()
+            items.append((shape, desc))
+
+        return items
+
     @staticmethod
-    def legend_size(image):
+    def legend_size(image_width, image_height, extra_rows=0):
         """
         Legend box size scaled to the exported image.
 
@@ -3219,46 +3455,90 @@ class ImageMarkerApp(QMainWindow):
         (~3%), so it always covers roughly the same portion of the
         picture regardless of resolution - sized to stay readable when
         the export is viewed full-screen on a ~16" display (err on the
-        large side).  Aspect ratio is width:height = 5:7, noticeably
-        narrower/taller than the old fixed 150x170 box.
+        large side).  Base design grid: 150 x 210 units for a
+        640 x 480 image (aspect ratio width:height = 5:7), plus 28
+        vertical units per shape-key row added below the color scale.
         """
-        # Design grid: a 150 x 210 px legend for a 640 x 480 image
-        # (same footprint as the old fixed-size legend at that size,
-        # but narrower/taller: aspect ratio 5:7 instead of 150:170).
+        design_w = 150.0
+        design_h = 210.0 + 28.0 * max(0, int(extra_rows))
+
         scale = math.sqrt(
-            image.width * image.height / (640.0 * 480.0)
+            image_width * image_height / (640.0 * 480.0)
         )
 
-        width = int(round(150 * scale))
-        height = int(round(210 * scale))
+        width = int(round(design_w * scale))
+        height = int(round(design_h * scale))
 
-        # Never smaller than the old fixed-size legend...
+        # Readability floor: never smaller than the old fixed-size
+        # legend (150 x 210 base) unless that would swallow too much
+        # of a small image.
         if width < 150 or height < 210:
-            width = max(width, 150)
-            height = max(height, 210)
+            if 150 <= image_width // 3 and 210 <= image_height:
+                width = max(width, 150)
+                height = max(height, 210)
 
-            # ...unless that would exceed a quarter of a small image;
-            # in that case shrink back proportionally instead.
-            if (
-                width > image.width // 4
-                or height > image.height // 4
-            ):
-                width = int(round(150 * scale))
-                height = int(round(210 * scale))
+        # Ceiling: the legend should never dominate the figure.
+        max_w = max(1, image_width // 3)
+        max_h = max(1, image_height)
 
-        # Never larger than a quarter of the image.
-        width = min(width, max(1, image.width // 4))
-        height = min(height, max(1, image.height // 4))
+        if width > max_w or height > max_h:
+            k = min(max_w / width, max_h / height)
+            width = max(1, int(round(width * k)))
+            height = max(1, int(round(height * k)))
 
-        # Restore the 5:7 aspect ratio whenever a clamp above distorted
-        # it (shrinking the larger dimension rather than growing the
-        # smaller one, so the box always fits inside the image).
-        if width / height > 5.0 / 7.0:
-            width = int(round(height * 5.0 / 7.0))
+        # Re-impose the design aspect ratio after any clamping above
+        # (shrink the offending dimension so the box stays sane).
+        if width / height > design_w / design_h:
+            width = max(1, int(round(height * design_w / design_h)))
         else:
-            height = int(round(width * 7.0 / 5.0))
+            height = max(1, int(round(width * design_h / design_w)))
 
         return width, height
+
+    def legend_layout(self, image_width, image_height, key_items=None):
+        """
+        Compute where the legend belongs for an export of an
+        ``image_width x image_height`` source image with ``key_items``
+        shape rows.
+
+        Returns ``(canvas_w, canvas_h, lw, lh, legend_x, legend_y)``.
+        If the legend does not fit inside the image without covering
+        more than half of its height, the exported canvas is widened
+        by a white strip on the right and the legend is placed there
+        instead of overlapping the picture.
+        """
+        n_rows = len(key_items) if key_items else 0
+
+        lw, lh = self.legend_size(image_width, image_height,
+                                  extra_rows=n_rows)
+
+        margin = max(4, int(round(lw * 0.10)))
+
+        fits_inside = (
+            lw + 2 * margin <= image_width
+            and lh + 2 * margin <= image_height
+            and lh <= image_height // 2  # don't cover more than half
+        )
+
+        if fits_inside:
+            return (
+                image_width,
+                image_height,
+                lw,
+                lh,
+                image_width - lw - margin,
+                margin,
+            )
+
+        # Extend the canvas to the right; the legend sits centered
+        # vertically in the new strip.
+        strip_w = lw + 2 * margin
+        canvas_w = image_width + strip_w
+
+        legend_x = image_width + margin
+        legend_y = max(margin, (image_height - lh) // 2)
+
+        return canvas_w, image_height, lw, lh, legend_x, legend_y
 
     @staticmethod
     def _legend_font(size):
@@ -3278,26 +3558,45 @@ class ImageMarkerApp(QMainWindow):
         except TypeError:  # older Pillow without the size parameter
             return ImageFont.load_default()
 
-    def create_legend(self, image):
+    def create_legend(self, image, key_items=None, place=None):
         """
         Composite a semi-transparent voltage-gradient legend onto the
         top-right corner of ``image`` (an RGB PIL.Image).  Returns a new
         RGB image; the input is not modified.
-        """
-        lw, lh = self.legend_size(image)
 
-        # Layout unit: fit a 150 x 210 design grid inside the box while
-        # keeping the content proportions correct for any clamped size.
-        s = min(lw / 150.0, lh / 210.0)
+        ``key_items`` is an optional list of ``(shape_name, text)``
+        tuples drawn beneath the color scale as a shape legend.
+
+        ``place`` optionally overrides the geometry with a tuple
+        ``(lw, lh, legend_x, legend_y)`` - used by the export path to
+        position the legend in a right-hand strip when it would
+        otherwise overlap the picture.
+        """
+        if key_items is None:
+            key_items = []
+
+        if place is not None:
+            lw, lh, legend_x, legend_y = place
+        else:
+            lw, lh = self.legend_size(
+                image.width, image.height, extra_rows=len(key_items)
+            )
+
+            # Layout unit: fit a 150 x 210 design grid (+28 units per key
+            # row) inside the box while keeping content proportions correct.
+            margin = max(4, int(round(lw * 0.10)))
+
+            legend_x = image.width - lw - margin
+            legend_y = margin
+
+        # Layout unit: fit a 150 x 210 design grid (+28 units per key
+        # row) inside the box while keeping content proportions correct.
+        design_h = 210.0 + 28.0 * len(key_items)
+        s = min(lw / 150.0, lh / design_h)
 
         # Center the design horizontally when the box is wider than tall
         # proportions imply (e.g. after a height clamp).
         ox = max(0.0, (lw - 150.0 * s) / 2.0)
-
-        margin = max(4, int(round(15 * s)))
-
-        legend_x = image.width - lw - margin
-        legend_y = margin
 
         overlay = Image.new(
             "RGBA",
@@ -3334,7 +3633,7 @@ class ImageMarkerApp(QMainWindow):
         bar_left = ox + 40 * s
         bar_top = 45 * s
         bar_width = 45 * s
-        bar_height = lh - bar_top - 50 * s
+        bar_height = lh - bar_top - (50 + 28.0 * len(key_items)) * s
 
         if bar_height < 20 * s:  # degenerate box; keep drawing sane
             bar_height = 20 * s
@@ -3388,7 +3687,7 @@ class ImageMarkerApp(QMainWindow):
         # Test-marker key along the bottom.
         dot_r = 9.0 * s
         dot_cx = ox + 15 * s
-        dot_cy = lh - 25 * s
+        dot_cy = lh - (25 + 28.0 * len(key_items)) * s
 
         od.ellipse(
             [
@@ -3417,6 +3716,103 @@ class ImageMarkerApp(QMainWindow):
             fill=(0, 0, 0, 255),
             font=label_font,
         )
+
+        # ----------------------------------------------------------
+        # Shape key: one row per (shape, description) below the scale.
+        # ----------------------------------------------------------
+        if key_items:
+            row_h = 28.0 * s
+            first_row_cy = lh - (25 + 28.0 * (len(key_items) - 1) / 2.0) * s \
+                if False else lh - 25 * s - row_h * (len(key_items) - 1) / 2.0
+
+            icon_r = 8.0 * s
+            icon_cx = ox + 15 * s
+
+            for index, (shape_name, text) in enumerate(key_items):
+                cy = first_row_cy - index * row_h
+
+                # Draw the shape itself (gray fill, black outline) so
+                # the key matches what appears on the image.
+                poly = None
+
+                if shape_name == "circle":
+                    od.ellipse(
+                        [
+                            icon_cx - icon_r,
+                            cy - icon_r,
+                            icon_cx + icon_r,
+                            cy + icon_r,
+                        ],
+                        fill=(120, 120, 120, 255),
+                        outline=(0, 0, 0, 255),
+                        width=1,
+                    )
+
+                elif shape_name == "square":
+                    half = icon_r / math.sqrt(2.0)
+                    od.polygon(
+                        [
+                            (icon_cx - half, cy - half),
+                            (icon_cx + half, cy - half),
+                            (icon_cx + half, cy + half),
+                            (icon_cx - half, cy + half),
+                        ],
+                        fill=(120, 120, 120, 255),
+                        outline=(0, 0, 0, 255),
+                        width=1,
+                    )
+
+                elif shape_name == "triangle":
+                    poly = [
+                        (
+                            icon_cx + icon_r * math.cos(
+                                math.radians(-90.0 + k * 120.0)
+                            ),
+                            cy + icon_r * math.sin(
+                                math.radians(-90.0 + k * 120.0)
+                            ),
+                        )
+                        for k in range(3)
+                    ]
+                    od.polygon(
+                        poly,
+                        fill=(120, 120, 120, 255),
+                        outline=(0, 0, 0, 255),
+                        width=1,
+                    )
+
+                elif shape_name == "star":
+                    inner = icon_r * 0.45
+                    poly = []
+                    for k in range(10):
+                        ang = math.radians(-90.0 + k * 36.0)
+                        rad = icon_r if k % 2 == 0 else inner
+                        poly.append(
+                            (
+                                icon_cx + rad * math.cos(ang),
+                                cy + rad * math.sin(ang),
+                            )
+                        )
+                    od.polygon(
+                        poly,
+                        fill=(120, 120, 120, 255),
+                        outline=(0, 0, 0, 255),
+                        width=1,
+                    )
+
+                text_x = icon_cx + icon_r + 10 * s
+
+                bbox = od.textbbox((0, 0), text, font=label_font)
+
+                od.text(
+                    (
+                        text_x,
+                        cy - (bbox[3] - bbox[1]) / 2.0 - bbox[1],
+                    ),
+                    text,
+                    fill=(0, 0, 0, 255),
+                    font=label_font,
+                )
 
         rgba = image.convert("RGBA")
 
