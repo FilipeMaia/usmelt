@@ -3387,9 +3387,9 @@ class ImageMarkerApp(QMainWindow):
                 )
 
             # ----------------------------------------------------------
-            # Legend (scales with the exported image size).  When it
-            # would dominate the picture, the canvas is widened instead
-            # and the legend is drawn in the new right-hand strip.
+            # Legend (compact box in the top-right corner of the
+            # image).  The canvas is never widened, so the exported
+            # picture keeps its original size and background.
             # ----------------------------------------------------------
 
             key_items = self.shape_key_items()
@@ -3404,13 +3404,6 @@ class ImageMarkerApp(QMainWindow):
             ) = self.legend_layout(
                 image.width, image.height, key_items=key_items
             )
-
-            if canvas_w != image.width or canvas_h != image.height:
-                extended = Image.new(
-                    "RGB", (canvas_w, canvas_h), (255, 255, 255)
-                )
-                extended.paste(image, (0, 0))
-                image = extended
 
             image = self.create_legend(
                 image,
@@ -3471,13 +3464,13 @@ class ImageMarkerApp(QMainWindow):
         """
         Legend box size scaled to the exported image.
 
-        The legend occupies a constant *fraction* of the image area
-        (~3%), so it always covers roughly the same portion of the
-        picture regardless of resolution - sized to stay readable when
-        the export is viewed full-screen on a ~16" display (err on the
-        large side).  Base design grid: 150 x 210 units for a
-        640 x 480 image (aspect ratio width:height = 5:7), plus 28
-        vertical units per shape-key row added below the color scale.
+        The legend is a compact box: it keeps a fixed design aspect
+        ratio (width:height = 5:7 for the base grid) and grows only
+        with the image diagonal, capped so it stays a small annotation
+        in the top-right corner instead of dominating the figure.
+        Base design grid: 150 x 210 units for a 640 x 480 image, plus
+        28 vertical units per shape-key row added below the color
+        scale.
         """
         design_w = 150.0
         design_h = 210.0 + 28.0 * max(0, int(extra_rows))
@@ -3489,13 +3482,15 @@ class ImageMarkerApp(QMainWindow):
         width = int(round(design_w * scale))
         height = int(round(design_h * scale))
 
-        # Readability floor: never smaller than the old fixed-size
-        # legend (150 x 210 base) unless that would swallow too much
-        # of a small image.
-        if width < 150 or height < 210:
-            if 150 <= image_width // 3 and 210 <= image_height:
-                width = max(width, 150)
-                height = max(height, 210)
+        # Compactness cap: keep the legend small relative to the
+        # picture (~1/6 of the width, ~1/4 of the height) so it reads
+        # as an annotation rather than covering the image.
+        cap_w = max(1, image_width // 6)
+        cap_h = max(1, image_height // 4)
+
+        k = min(1.0, cap_w / width, cap_h / height)
+        width = max(1, int(round(width * k)))
+        height = max(1, int(round(height * k)))
 
         # Ceiling: the legend should never dominate the figure.
         max_w = max(1, image_width // 3)
@@ -3522,43 +3517,33 @@ class ImageMarkerApp(QMainWindow):
         shape rows.
 
         Returns ``(canvas_w, canvas_h, lw, lh, legend_x, legend_y)``.
-        If the legend does not fit inside the image without covering
-        more than half of its height, the exported canvas is widened
-        by a white strip on the right and the legend is placed there
-        instead of overlapping the picture.
+        The legend is always a compact box anchored to the top-right
+        corner of the image; the canvas is never widened (no white
+        strip is added around the picture).
         """
         n_rows = len(key_items) if key_items else 0
 
         lw, lh = self.legend_size(image_width, image_height,
                                   extra_rows=n_rows)
 
+        # Safety clamp: even for tiny images the legend must fit
+        # inside the picture with a small margin.
         margin = max(4, int(round(lw * 0.10)))
 
-        fits_inside = (
-            lw + 2 * margin <= image_width
-            and lh + 2 * margin <= image_height
-            and lh <= image_height // 2  # don't cover more than half
+        while (lw + 2 * margin > image_width or
+               lh + 2 * margin > image_height) and lw > 10:
+            lw = max(1, int(round(lw * 0.9)))
+            lh = max(1, int(round(lh * 0.9)))
+            margin = max(4, int(round(lw * 0.10)))
+
+        return (
+            image_width,
+            image_height,
+            lw,
+            lh,
+            image_width - lw - margin,
+            margin,
         )
-
-        if fits_inside:
-            return (
-                image_width,
-                image_height,
-                lw,
-                lh,
-                image_width - lw - margin,
-                margin,
-            )
-
-        # Extend the canvas to the right; the legend sits centered
-        # vertically in the new strip.
-        strip_w = lw + 2 * margin
-        canvas_w = image_width + strip_w
-
-        legend_x = image_width + margin
-        legend_y = max(margin, (image_height - lh) // 2)
-
-        return canvas_w, image_height, lw, lh, legend_x, legend_y
 
     @staticmethod
     def _legend_font(size):
@@ -3589,8 +3574,7 @@ class ImageMarkerApp(QMainWindow):
 
         ``place`` optionally overrides the geometry with a tuple
         ``(lw, lh, legend_x, legend_y)`` - used by the export path to
-        position the legend in a right-hand strip when it would
-        otherwise overlap the picture.
+        position the compact legend box in the top-right corner.
         """
         if key_items is None:
             key_items = []
@@ -3648,15 +3632,27 @@ class ImageMarkerApp(QMainWindow):
             font=title_font,
         )
 
+        # ----------------------------------------------------------
+        # Content is laid out in non-overlapping vertical bands:
+        #   title -> color scale -> shape-key rows -> Test line.
+        # The gradient bar only occupies the space left between the
+        # title and the bottom text block, so the scale and the
+        # description segments can never collide.
+        # ----------------------------------------------------------
+
+        # Bottom block height (shape-key rows + the Test line).
+        bottom_block = 30.0 * s if key_items else 24.0 * s
+        bottom_block += 28.0 * s * len(key_items)
+
+        band_top = 45 * s
+        band_bottom = lh - bottom_block
+
         # Gradient bar: blue (bottom, Min) -> green -> yellow -> orange
         # (top, Max).  Narrower than before (bar takes ~1/3 of width).
         bar_left = ox + 40 * s
-        bar_top = 45 * s
+        bar_top = band_top
         bar_width = 45 * s
-        bar_height = lh - bar_top - (50 + 28.0 * len(key_items)) * s
-
-        if bar_height < 20 * s:  # degenerate box; keep drawing sane
-            bar_height = 20 * s
+        bar_height = max(18.0 * s, band_bottom - band_top)
 
         vmax = self.color_max
         vmin = self.color_min
@@ -3704,135 +3700,133 @@ class ImageMarkerApp(QMainWindow):
         draw_label(f"{(vmin + vmax) / 2.0:.2f}", bar_top + bar_height / 2.0)
         draw_label(f"{vmin:.2f}", bar_top + bar_height)
 
-        # Test-marker key along the bottom.
+        # ----------------------------------------------------------
+        # Bottom block: shape-key rows (if any) stacked above the
+        # "Test" line.  Rows are laid out sequentially from the bottom
+        # of the box upward, each in its own band, so nothing can
+        # collide with the color scale above or with each other.
+        # ----------------------------------------------------------
+        row_h = 28.0 * s
+        icon_r = 8.0 * s
         dot_r = 9.0 * s
-        dot_cx = ox + 15 * s
-        dot_cy = lh - (25 + 28.0 * len(key_items)) * s
+        icon_cx = ox + 15 * s
+
+        def draw_centered_text(text, cx_left, cy):
+            bbox = od.textbbox((0, 0), text, font=label_font)
+            od.text(
+                (cx_left, cy - (bbox[3] - bbox[1]) / 2.0 - bbox[1]),
+                text,
+                fill=(0, 0, 0, 255),
+                font=label_font,
+            )
+
+        # "Test = 5.00 V" line: always the last (bottom-most) row,
+        # vertically centered in its reserved band at the box bottom.
+        test_cy = lh - (15.0 * s if key_items else 12.0 * s)
 
         od.ellipse(
             [
-                dot_cx,
-                dot_cy - dot_r,
-                dot_cx + 2 * dot_r,
-                dot_cy + dot_r,
+                icon_cx - dot_r,
+                test_cy - dot_r,
+                icon_cx + dot_r,
+                test_cy + dot_r,
             ],
             fill=(255, 0, 0, 255),
             outline=(0, 0, 0, 255),
             width=1,
         )
 
-        test_bbox = od.textbbox(
-            (0, 0), "Test = 5.00 V", font=label_font
+        draw_centered_text(
+            "Test = 5.00 V", icon_cx + dot_r + 10 * s, test_cy
         )
 
-        od.text(
-            (
-                dot_cx + 2 * dot_r + 10 * s,
-                dot_cy
-                - (test_bbox[3] - test_bbox[1]) / 2.0
-                - test_bbox[1],
-            ),
-            "Test = 5.00 V",
-            fill=(0, 0, 0, 255),
-            font=label_font,
-        )
+        # Shape key: one row per (shape, description) directly above
+        # the Test line.
+        for index, (shape_name, text) in enumerate(reversed(key_items)):
+            cy = test_cy - row_h * (index + 1)
 
-        # ----------------------------------------------------------
-        # Shape key: one row per (shape, description) below the scale.
-        # ----------------------------------------------------------
-        if key_items:
-            row_h = 28.0 * s
-            first_row_cy = lh - (25 + 28.0 * (len(key_items) - 1) / 2.0) * s \
-                if False else lh - 25 * s - row_h * (len(key_items) - 1) / 2.0
+            # Draw the shape itself (gray fill, black outline) so
+            # the key matches what appears on the image.
+            poly = None
 
-            icon_r = 8.0 * s
-            icon_cx = ox + 15 * s
-
-            for index, (shape_name, text) in enumerate(key_items):
-                cy = first_row_cy - index * row_h
-
-                # Draw the shape itself (gray fill, black outline) so
-                # the key matches what appears on the image.
-                poly = None
-
-                if shape_name == "circle":
-                    od.ellipse(
-                        [
-                            icon_cx - icon_r,
-                            cy - icon_r,
-                            icon_cx + icon_r,
-                            cy + icon_r,
-                        ],
-                        fill=(120, 120, 120, 255),
-                        outline=(0, 0, 0, 255),
-                        width=1,
-                    )
-
-                elif shape_name == "square":
-                    half = icon_r / math.sqrt(2.0)
-                    od.polygon(
-                        [
-                            (icon_cx - half, cy - half),
-                            (icon_cx + half, cy - half),
-                            (icon_cx + half, cy + half),
-                            (icon_cx - half, cy + half),
-                        ],
-                        fill=(120, 120, 120, 255),
-                        outline=(0, 0, 0, 255),
-                        width=1,
-                    )
-
-                elif shape_name == "triangle":
-                    poly = [
-                        (
-                            icon_cx + icon_r * math.cos(
-                                math.radians(-90.0 + k * 120.0)
-                            ),
-                            cy + icon_r * math.sin(
-                                math.radians(-90.0 + k * 120.0)
-                            ),
-                        )
-                        for k in range(3)
-                    ]
-                    od.polygon(
-                        poly,
-                        fill=(120, 120, 120, 255),
-                        outline=(0, 0, 0, 255),
-                        width=1,
-                    )
-
-                elif shape_name == "star":
-                    inner = icon_r * 0.45
-                    poly = []
-                    for k in range(10):
-                        ang = math.radians(-90.0 + k * 36.0)
-                        rad = icon_r if k % 2 == 0 else inner
-                        poly.append(
-                            (
-                                icon_cx + rad * math.cos(ang),
-                                cy + rad * math.sin(ang),
-                            )
-                        )
-                    od.polygon(
-                        poly,
-                        fill=(120, 120, 120, 255),
-                        outline=(0, 0, 0, 255),
-                        width=1,
-                    )
-
-                text_x = icon_cx + icon_r + 10 * s
-
-                bbox = od.textbbox((0, 0), text, font=label_font)
-
-                od.text(
-                    (
-                        text_x,
-                        cy - (bbox[3] - bbox[1]) / 2.0 - bbox[1],
-                    ),
-                    text,
-                    fill=(0, 0, 0, 255),
-                    font=label_font,
+            if shape_name == "circle":
+                od.ellipse(
+                    [
+                        icon_cx - icon_r,
+                        cy - icon_r,
+                        icon_cx + icon_r,
+                        cy + icon_r,
+                    ],
+                    fill=(120, 120, 120, 255),
+                    outline=(0, 0, 0, 255),
+                    width=1,
                 )
+
+            elif shape_name == "square":
+                half = icon_r / math.sqrt(2.0)
+                od.polygon(
+                    [
+                        (icon_cx - half, cy - half),
+                        (icon_cx + half, cy - half),
+                        (icon_cx + half, cy + half),
+                        (icon_cx - half, cy + half),
+                    ],
+                    fill=(120, 120, 120, 255),
+                    outline=(0, 0, 0, 255),
+                    width=1,
+                )
+
+            elif shape_name == "triangle":
+                poly = [
+                    (
+                        icon_cx + icon_r * math.cos(
+                            math.radians(-90.0 + k * 120.0)
+                        ),
+                        cy + icon_r * math.sin(
+                            math.radians(-90.0 + k * 120.0)
+                        ),
+                    )
+                    for k in range(3)
+                ]
+                od.polygon(
+                    poly,
+                    fill=(120, 120, 120, 255),
+                    outline=(0, 0, 0, 255),
+                    width=1,
+                )
+
+            elif shape_name == "star":
+                inner = icon_r * 0.45
+                poly = []
+                for k in range(10):
+                    ang = math.radians(-90.0 + k * 36.0)
+                    rad = icon_r if k % 2 == 0 else inner
+                    poly.append(
+                        (
+                            icon_cx + rad * math.cos(ang),
+                            cy + rad * math.sin(ang),
+                        )
+                    )
+                od.polygon(
+                    poly,
+                    fill=(120, 120, 120, 255),
+                    outline=(0, 0, 0, 255),
+                    width=1,
+                )
+
+            text_x = icon_cx + icon_r + 10 * s
+
+            bbox = od.textbbox((0, 0), text, font=label_font)
+
+            od.text(
+                (
+                    text_x,
+                    cy - (bbox[3] - bbox[1]) / 2.0 - bbox[1],
+                ),
+                text,
+                fill=(0, 0, 0, 255),
+                font=label_font,
+            )
 
         rgba = image.convert("RGBA")
 
