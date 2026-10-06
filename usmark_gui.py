@@ -3239,53 +3239,9 @@ class ImageMarkerApp(QMainWindow):
                 )
             )
 
-            # Ask for color scale.
-            min_value, ok = QInputDialog.getDouble(
-                self,
-                "Color Scale",
-                "Minimum voltage:",
-                self.color_min,
-                0.0,
-                100.0,
-                2,
-            )
-
-            if not ok:
-                return
-
-            max_value, ok = QInputDialog.getDouble(
-                self,
-                "Color Scale",
-                "Maximum voltage:",
-                self.color_max,
-                0.0,
-                100.0,
-                2,
-            )
-
-            if not ok:
-                return
-
-            if max_value <= min_value:
-                QMessageBox.warning(
-                    self,
-                    "Color Scale",
-                    "Maximum voltage must be greater than minimum voltage.",
-                )
-
-                return
-
-            self.color_min = min_value
-            self.color_max = max_value
-
-            self.color_min_spin.setValue(
-                min_value
-            )
-
-            self.color_max_spin.setValue(
-                max_value
-            )
-
+            # The color-scale range no longer prompts on import;
+            # the current Min/Max spin-box values are kept and can
+            # be adjusted later in the Color Scale panel.
             self.markers = []
             self.undo_stack = []
             self.redo_stack = []
